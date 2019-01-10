@@ -1,6 +1,8 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Windows.Forms;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -11,39 +13,19 @@ namespace ch_save_edit
     {
         private string data;
         private JToken root;
+        private IEnumerable<TextBox> heroTextBoxes;
         public SaveEditorWindow() => InitializeComponent();
 
-        private void DecodeButton_click(object sender, EventArgs e)
+        private void UpdateSaveData(string data)
         {
-            data = JsonUtil.DecodeJson(rawText.Text);
+            this.data = data;
             rawText.Text = data;
             FillTreeView();
+            LoadCurrenciesData();
+            heroTextBoxes = Helper.GetChildControls<TextBox>(heroesGroupBox).Reverse();
+            LoadHeroData();
         }
 
-        private void EncodeButton_Click(object sender, EventArgs e) => JsonUtil.EncodeJson(rawText.Text);
-
-        private void ValueSetButton_Click(object sender, EventArgs e)
-        {
-            if (string.IsNullOrWhiteSpace(valueTextBox.Text)) return;
-            if (root is null) return;
-            var node = jsonTree.SelectedNode.Tag;
-            if (node is null) return;
-            if (!(node is JValue jnode)) return;
-
-            //set actual json objects value
-            jnode.Value = valueTextBox.Text;
-            //set label of treeview
-            jsonTree.SelectedNode.Text = valueTextBox.Text;
-
-            //empty up textbox
-            valueTextBox.Text = string.Empty;
-
-            //update rawText
-            rawText.Text = root.ToString();
-            //update treeview
-            jsonTree.Update();
-        }
-        
         private void FillTreeView()
         {
             if (string.IsNullOrWhiteSpace(rawText.Text)) return;
@@ -55,7 +37,6 @@ namespace ch_save_edit
                 DisplayTreeView(root, "Data");
             }
         }
-
         private void DisplayTreeView(JToken root, string rootName)
         {
             jsonTree.BeginUpdate();
@@ -71,7 +52,6 @@ namespace ch_save_edit
                 jsonTree.EndUpdate();
             }
         }
-
         private void AddNode(JToken token, TreeNode inTreeNode)
         {
             if (token == null)
@@ -105,11 +85,36 @@ namespace ch_save_edit
             }
         }
 
-        private void JsonTree_AfterSelect(object sender, EventArgs e)
+        private void DecodeButton_click(object sender, EventArgs e)
         {
-            valueTextBox.Text = jsonTree.SelectedNode.Text;
+            UpdateSaveData(JsonUtil.DecodeJson(rawText.Text));
         }
+        private void EncodeButton_Click(object sender, EventArgs e)
+        {
+            JsonUtil.EncodeJson(rawText.Text);
+        }
+        private void ValueSetButton_Click(object sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(valueTextBox.Text)) return;
+            if (root is null) return;
+            var node = jsonTree.SelectedNode.Tag;
+            if (node is null) return;
+            if (!(node is JValue jnode)) return;
 
+            //set actual json objects value
+            jnode.Value = valueTextBox.Text;
+            //set label of treeview
+            jsonTree.SelectedNode.Text = valueTextBox.Text;
+
+            //empty up textbox
+            valueTextBox.Text = string.Empty;
+
+            //update rawText
+            rawText.Text = root.ToString();
+            //update treeview
+            jsonTree.Update();
+        }
+        
         private void ImportToolStripMenuItem_Click(object sender, EventArgs e)
         {
             using (OpenFileDialog openFileDialog = new OpenFileDialog())
@@ -125,13 +130,11 @@ namespace ch_save_edit
                     rawText.Text = File.ReadAllText(openFileDialog.FileName);
                     if (JsonUtil.IsEncoded(rawText.Text))
                     {
-                        rawText.Text = JsonUtil.DecodeJson(rawText.Text);
-                        data = rawText.Text;
-                        FillTreeView();
-                    } else
+                        UpdateSaveData(JsonUtil.DecodeJson(rawText.Text));
+                    }
+                    else
                     {
-                        data = rawText.Text;
-                        FillTreeView();
+                        UpdateSaveData(rawText.Text);
                     }
                 }
             }
@@ -185,5 +188,74 @@ namespace ch_save_edit
                 MessageBoxDefaultButton.Button1,
                 MessageBoxOptions.ServiceNotification,
                 false);
+        private void JsonTree_AfterSelect(object sender, TreeViewEventArgs e)
+        {
+            valueTextBox.Text = jsonTree.SelectedNode.Text;
+        }
+
+        private void LoadCurrenciesData()
+        {
+            goldTextBox.Text = Helper.SelectJValue(this.root, "gold");
+            rubyTextBox.Text = Helper.SelectJValue(this.root, "rubies");
+            heroTextBox.Text = Helper.SelectJValue(this.root, "primalSouls");
+            ancientTextBox.Text = Helper.SelectJValue(this.root, $"ancientSouls");
+        }
+        private void LoadHeroData()
+        {
+            if (root is null) return;
+            short c = 0;
+            foreach (TextBox tb in heroTextBoxes)
+            {
+                c++;
+                tb.Text = Helper.SelectJValue(this.root, $"heroCollection.heroes.{c}.level");
+            }
+        } 
+        private void SetCurrenciesButton_Click(object sender, EventArgs e)
+        {
+            if (root is null) return;
+            var gold = root.SelectToken("gold") as JValue;
+            var rubies = root.SelectToken("rubies") as JValue;
+            var primalSouls = root.SelectToken("primalSouls") as JValue;
+            var ancientSouls = root.SelectToken("ancientSouls") as JValue;
+            
+            gold.Value = goldTextBox.Text;
+            rubies.Value = rubyTextBox.Text;
+            primalSouls.Value = heroTextBox.Text;
+            ancientSouls.Value = ancientTextBox.Text;
+            
+            UpdateSaveData(root.ToString());
+        }
+        private void SetHeroValues_Click(object sender, EventArgs e)
+        {
+            if (root is null) return;
+            Int16 c = 0;
+
+            foreach (TextBox tb in heroTextBoxes)
+            {
+                c++;
+                if (string.IsNullOrWhiteSpace(tb.Text)) continue;
+                (root.SelectToken($"heroCollection.heroes.{c}.level") as JValue).Value = tb.Text;
+            }
+
+            UpdateSaveData(root.ToString());
+        }
+
+        //helper function
+    }
+
+    public static class Helper
+    {
+        public static string SelectJValue(JToken root, string path)
+        {
+            if (String.IsNullOrWhiteSpace(path)) return null;
+            if (root is null) return null;
+            return (root.SelectToken(path) as JValue).Value.ToString();
+        }
+
+        public static IEnumerable<TControl> GetChildControls<TControl>(this Control control) where TControl : Control
+        {
+            var children = (control.Controls != null) ? control.Controls.OfType<TControl>() : Enumerable.Empty<TControl>();
+            return children.SelectMany(c => GetChildControls<TControl>(c)).Concat(children);
+        }
     }
 }
